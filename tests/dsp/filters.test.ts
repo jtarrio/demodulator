@@ -1,0 +1,197 @@
+// Copyright 2025 Jacobo Tarrio Barreiro. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import { test, assert } from "vitest";
+import { add, addDc, count, power, rmsd, sineTone } from "../testutil.js";
+import {
+  AGC,
+  DcBlocker,
+  Deemphasizer,
+  FIRFilter,
+  FrequencyShifter,
+} from "../../src/dsp/filters.js";
+
+test("FIRFilter as delay line", () => {
+  let coefs = new Float32Array([0, 0, 1, 0, 0]);
+  let filter = new FIRFilter(coefs);
+
+  // Using inPlace
+  let signal = count(10, 15);
+  filter.inPlace(signal);
+  assert.deepEqual(signal, new Float32Array([0, 0, 10, 11, 12]));
+  signal = count(20, 25);
+  filter.inPlace(signal);
+  assert.deepEqual(signal, new Float32Array([13, 14, 20, 21, 22]));
+  signal = count(30, 40);
+  filter.inPlace(signal);
+  assert.deepEqual(
+    signal,
+    new Float32Array([23, 24, 30, 31, 32, 33, 34, 35, 36, 37])
+  );
+  signal = count(40, 43);
+  filter.inPlace(signal);
+  assert.deepEqual(signal, new Float32Array([38, 39, 40]));
+
+  // Compare get() and getDelay()
+  filter = new FIRFilter(coefs);
+  signal = count(100, 110);
+  filter.loadSamples(signal);
+  let expected = new Float32Array([
+    0, 0, 100, 101, 102, 103, 104, 105, 106, 107,
+  ]);
+  for (let i = 0; i < 10; ++i) {
+    assert.equal(filter.get(i), filter.getDelayed(i));
+    assert.equal(filter.get(i), expected[i]);
+  }
+});
+
+test("FIRFilter as convolution filter", () => {
+  let coefs = new Float32Array([1, 2, 5, 9, 16]);
+  const conv = (signal: Float32Array) => {
+    let filter = new FIRFilter(coefs);
+    filter.inPlace(signal);
+    return signal;
+  };
+
+  assert.deepEqual(
+    conv(new Float32Array([1, 0, 0, 0, 0, 0])),
+    new Float32Array([16, 9, 5, 2, 1, 0])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 1, 0, 0, 0, 0])),
+    new Float32Array([0, 16, 9, 5, 2, 1])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 0, 1, 0, 0, 0])),
+    new Float32Array([0, 0, 16, 9, 5, 2])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 0, 0, 1, 0, 0])),
+    new Float32Array([0, 0, 0, 16, 9, 5])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 0, 0, 0, 1, 0])),
+    new Float32Array([0, 0, 0, 0, 16, 9])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 0, 0, 0, 0, 1])),
+    new Float32Array([0, 0, 0, 0, 0, 16])
+  );
+  assert.deepEqual(
+    conv(new Float32Array([0, 1, 0, 0, 1, 0])),
+    new Float32Array([0, 16, 9, 5, 18, 10])
+  );
+});
+
+test("AGC", () => {
+  let agc = new AGC(8000, 0.5, 10);
+  // Runs 0.25 seconds on the AGC
+  const agcPower = (amplitude: number) => {
+    let tone = sineTone(2000, 8000, 1000, amplitude);
+    agc.inPlace(tone);
+    return power(tone);
+  };
+  // Saturate the AGC with a full-power tone.
+  assert.isAtLeast(agcPower(1), 0.499);
+  // Reduce the amplitude, the AGC takes 1 second to start raising the gain.
+  assert.approximately(agcPower(0.1), 0.005, 0.0001);
+  assert.approximately(agcPower(0.1), 0.005, 0.0001);
+  assert.approximately(agcPower(0.1), 0.005, 0.0001);
+  assert.approximately(agcPower(0.1), 0.005, 0.0001);
+  // AGC ramps up to 90% of power within 5 TC
+  assert.approximately(agcPower(0.1), 0.006, 0.0005);
+  assert.approximately(agcPower(0.1), 0.011, 0.0005);
+  assert.approximately(agcPower(0.1), 0.018, 0.0005);
+  assert.approximately(agcPower(0.1), 0.029, 0.0005);
+  assert.approximately(agcPower(0.1), 0.048, 0.0005);
+  assert.approximately(agcPower(0.1), 0.079, 0.0005);
+  assert.approximately(agcPower(0.1), 0.13, 0.0005);
+  assert.approximately(agcPower(0.1), 0.215, 0.0005);
+  assert.approximately(agcPower(0.1), 0.354, 0.0005);
+  assert.approximately(agcPower(0.1), 0.45, 0.0005);
+  // We can increase the input power by 10% without changing the gain
+  assert.approximately(agcPower(0.105), 0.496, 0.0005);
+  // But if we increase it more, the AGC cuts the gain
+  assert.approximately(agcPower(0.2), 0.5, 0.005);
+});
+
+test("DcBlocker", () => {
+  let blocker = new DcBlocker(8000);
+  const blockerDiff = () => {
+    let tone = sineTone(2000, 8000, 1000, 0.1);
+    let signal = addDc(new Float32Array(tone), 0.1);
+    blocker.inPlace(signal);
+    return rmsd(signal, tone);
+  };
+
+  // -45dB in 3 seconds (the original value is 0.1)
+  assert.approximately(blockerDiff(), 0.079, 0.0005);
+  assert.approximately(blockerDiff(), 0.048, 0.0005);
+  assert.approximately(blockerDiff(), 0.029, 0.0005);
+  assert.approximately(blockerDiff(), 0.018, 0.0005);
+  assert.approximately(blockerDiff(), 0.011, 0.0005);
+  assert.approximately(blockerDiff(), 0.007, 0.0005);
+  assert.approximately(blockerDiff(), 0.004, 0.0005);
+  assert.approximately(blockerDiff(), 0.002, 0.0005);
+  assert.approximately(blockerDiff(), 0.001, 0.0005);
+  assert.approximately(blockerDiff(), 0.001, 0.0005);
+  assert.approximately(blockerDiff(), 0.001, 0.0005);
+  assert.approximately(blockerDiff(), 0.0, 0.0005);
+});
+
+test("Deemphasizer", () => {
+  const sampleRate = 192000;
+  for (const timeConstant of [50, 75]) {
+    const deemphPower = (freq: number) => {
+      let deemph = new Deemphasizer(sampleRate, timeConstant);
+      let tone = sineTone(sampleRate, sampleRate, freq, 1);
+      deemph.inPlace(tone);
+      return power(tone.subarray(sampleRate * 0.75));
+    };
+
+    const expectedPower = (freq: number) => {
+      let xc = 1 / (2 * Math.PI * freq * Math.sqrt(timeConstant * 1e-6));
+      let o = xc / Math.sqrt(timeConstant * 1e-6 + xc * xc);
+      return (o * o) / 2;
+    };
+
+    for (let i = 300; i < 19000; i += 1000) {
+      assert.approximately(
+        deemphPower(i),
+        expectedPower(i),
+        0.0005,
+        `Mismatch in frequency response for ${i} Hz with time constant ${timeConstant} µs`
+      );
+    }
+  }
+});
+
+test("FrequencyShifter", () => {
+  // One real 1000 sinetone
+  let iI = sineTone(80, 8000, 1000, 0.5);
+  let iQ = new Float32Array(iI.length);
+
+  // Shift up 300 Hz
+  let shifter = new FrequencyShifter(8000);
+  shifter.inPlace(iI, iQ, 300);
+
+  // We expect to see one complex sinetone at -700 Hz and another at 1300 Hz
+  let eI = add(sineTone(80, 8000, -700, 0.25), sineTone(80, 8000, 1300, 0.25));
+  let eQ = add(
+    sineTone(80, 8000, -700, 0.25, -Math.PI / 2),
+    sineTone(80, 8000, 1300, 0.25, -Math.PI / 2)
+  );
+  assert.isAtMost(rmsd(iI, eI), 0.0005);
+  assert.isAtMost(rmsd(iQ, eQ), 0.0005);
+});

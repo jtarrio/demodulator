@@ -117,8 +117,8 @@ export class FFT {
     outImag.fill(0);
     for (let i = 0; i < length && i < real.length && i < imag.length; ++i) {
       const ri = this.revIndex[i];
-      outReal[ri] = (this.window[i] * real[i]) / length;
-      outImag[ri] = (this.window[i] * imag[i]) / length;
+      outReal[ri] = (this.window[i] * real[i]);
+      outImag[ri] = (this.window[i] * imag[i]);
     }
     doFastTransform(this.length, this.bwd, outReal, outImag);
     return { real: outReal, imag: outImag };

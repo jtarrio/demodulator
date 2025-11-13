@@ -161,7 +161,7 @@ class RingBuffer<T extends TypedArray<T>> {
   /** Copies the provided data into the ring buffer. */
   store(data: T) {
     let count = Math.min(data.length, this.buffer.length);
-    let { dstOffset } = this.doCopy(count, data, 0, this.buffer, this.writePos);
+    let { dstOffset } = this.doCopy(count, data, data.length - count, this.buffer, this.writePos);
     this.writePos = dstOffset;
     this.filled = Math.min(this.buffer.length, this.filled + count);
     if (this.filled == this.buffer.length) {
@@ -189,7 +189,7 @@ class RingBuffer<T extends TypedArray<T>> {
    * by moveTo.
    */
   copyTo(data: T) {
-    let count = Math.min(data.length, this.buffer.length, this.filled);
+    let count = Math.min(data.length, this.buffer.length);
     let srcOffset =
       (this.writePos + this.buffer.length - count) % this.buffer.length;
     this.doCopy(count, this.buffer, srcOffset, data, 0);

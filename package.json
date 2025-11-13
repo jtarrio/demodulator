@@ -11,11 +11,15 @@
   "exports": {
     "./*.js": "./dist/*.js"
   },
-  "files": ["./dist"],
+  "files": [
+    "./dist"
+  ],
   "scripts": {
-    "build": "rm -fR dist/ && tsc"
+    "build": "rm -fR dist/ && tsc",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.8"
   }
 }

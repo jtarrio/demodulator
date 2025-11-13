@@ -176,13 +176,9 @@ export class AGC implements Filter {
 
 /** A filter that blocks DC signals. */
 export class DcBlocker implements Filter {
-  constructor(
-    sampleRate: number,
-    private restricted?: boolean
-  ) {
+  constructor(sampleRate: number) {
     this.alpha = 1 - Math.exp(-1 / (sampleRate / 2));
     this.dc = 0;
-    this.restricted = this.restricted || false;
   }
 
   private alpha: number;
@@ -204,7 +200,7 @@ export class DcBlocker implements Filter {
     let dc = this.dc;
     for (let i = 0; i < samples.length; ++i) {
       dc += alpha * (samples[i] - dc);
-      if (!this.restricted || dc * dc < 6e-5) samples[i] -= dc;
+      samples[i] -= dc;
     }
     this.dc = dc;
   }
@@ -217,7 +213,8 @@ export class Deemphasizer implements Filter {
    * @param timeConstant_uS The filter's time constant in microseconds.
    */
   constructor(sampleRate: number, timeConstant_uS: number) {
-    this.alpha = 1 - Math.exp(-1 / ((sampleRate * timeConstant_uS) / 1e6));
+    const y = 1 - Math.cos(1e6 / (sampleRate * timeConstant_uS));
+    this.alpha = -y + Math.sqrt(y * y + 2 * y);
     this.val = 0;
   }
 
