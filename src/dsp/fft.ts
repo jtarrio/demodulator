@@ -30,8 +30,12 @@ export function actualLength(minimumLength: number): number {
   return realLength;
 }
 
-/** The output of the transform functions. */
-export type FFTOutput = { real: Float32Array; imag: Float32Array };
+/**
+ * The output of the transform functions.
+ *
+ * The first array contains the real parts, and the second array contains the imaginary parts.
+ */
+export type FFTOutput = [Float32Array, Float32Array];
 
 /** Fast Fourier Transform and reverse transform with a given length. */
 export class FFT {
@@ -72,7 +76,7 @@ export class FFT {
    * Transforms the given time-domain input.
    * @param real An array of real parts.
    * @param imag An array of imaginary parts.
-   * @return An object containing an array of real parts and an array of imaginary parts.
+   * @return The output of the transform.
    */
   transform(real: Float32Array, imag: Float32Array): FFTOutput;
   transform(real: number[], imag: number[]): FFTOutput;
@@ -87,7 +91,7 @@ export class FFT {
       outImag[ri] = (this.window[i] * imag[i]) / length;
     }
     doFastTransform(this.length, this.fwd, outReal, outImag);
-    return { real: outReal, imag: outImag };
+    return [outReal, outImag];
   }
 
   transformCircularBuffers(
@@ -106,7 +110,7 @@ export class FFT {
    * The input and output arrays must be the same length as the FFT.
    * @param real An array of real parts.
    * @param imag An array of imaginary parts.
-   * @return An object containing an array of real parts and an array of imaginary parts.
+   * @return The output of the reverse transform.
    */
   reverse(real: Float32Array, imag: Float32Array): FFTOutput;
   reverse(real: number[], imag: number[]): FFTOutput;
@@ -117,11 +121,11 @@ export class FFT {
     outImag.fill(0);
     for (let i = 0; i < length && i < real.length && i < imag.length; ++i) {
       const ri = this.revIndex[i];
-      outReal[ri] = (this.window[i] * real[i]);
-      outImag[ri] = (this.window[i] * imag[i]);
+      outReal[ri] = this.window[i] * real[i];
+      outImag[ri] = this.window[i] * imag[i];
     }
     doFastTransform(this.length, this.bwd, outReal, outImag);
-    return { real: outReal, imag: outImag };
+    return [outReal, outImag];
   }
 }
 

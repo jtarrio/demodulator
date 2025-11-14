@@ -17,7 +17,7 @@ export interface Filter {
   /** Returns a newly initialized clone of this filter. */
   clone(): Filter;
   /** Returns this filter's delay, in samples. */
-  delay(): number;
+  getDelay(): number;
   /** Applies the filter to the input samples, in place. */
   inPlace(samples: Float32Array): void;
 }
@@ -48,7 +48,7 @@ export class FIRFilter implements Filter {
     return new FIRFilter(this.coefs);
   }
 
-  delay(): number {
+  getDelay(): number {
     return this.center;
   }
 
@@ -56,6 +56,13 @@ export class FIRFilter implements Filter {
     this.loadSamples(samples);
     for (let i = 0; i < samples.length; ++i) {
       samples[i] = this.get(i);
+    }
+  }
+
+  delayInPlace(samples: Float32Array) {
+    this.loadSamples(samples);
+    for (let i = 0; i < samples.length; ++i) {
+      samples[i] = this.getDelayed(i);
     }
   }
 
@@ -125,7 +132,7 @@ export class AGC implements Filter {
     maxGain?: number
   ) {
     this.dcBlocker = new DcBlocker(sampleRate);
-    this.alpha = 1 - Math.exp(-1 / (sampleRate * timeConstantSeconds));
+    this.alpha = alpha(sampleRate, timeConstantSeconds);
     this.counter = 0;
     this.maxPower = 0;
     this.maxGain = maxGain || 100;
@@ -143,7 +150,7 @@ export class AGC implements Filter {
     return copy;
   }
 
-  delay(): number {
+  getDelay(): number {
     return 0;
   }
 
@@ -177,7 +184,7 @@ export class AGC implements Filter {
 /** A filter that blocks DC signals. */
 export class DcBlocker implements Filter {
   constructor(sampleRate: number) {
-    this.alpha = 1 - Math.exp(-1 / (sampleRate / 2));
+    this.alpha = alpha(sampleRate, 0.5);
     this.dc = 0;
   }
 
@@ -191,7 +198,7 @@ export class DcBlocker implements Filter {
     return copy;
   }
 
-  delay(): number {
+  getDelay(): number {
     return 0;
   }
 
@@ -206,6 +213,21 @@ export class DcBlocker implements Filter {
   }
 }
 
+/**
+ * Returns the decay value to use in a single-pole IIR filter
+ * with the given time constant.
+ *
+ * The filter's output must be iterated using the expression:
+ *
+ * Y += alpha * (X - Y);
+ * @param sampleRate The signal's sample rate.
+ * @param timeConstant The time constant in seconds
+ */
+export function alpha(sampleRate: number, timeConstant: number): number {
+  const y = 1 - Math.cos(1 / (sampleRate * timeConstant));
+  return -y + Math.sqrt(y * y + 2 * y);
+}
+
 /** A de-emphasis filter with the given time constant. */
 export class Deemphasizer implements Filter {
   /**
@@ -213,8 +235,7 @@ export class Deemphasizer implements Filter {
    * @param timeConstant_uS The filter's time constant in microseconds.
    */
   constructor(sampleRate: number, timeConstant_uS: number) {
-    const y = 1 - Math.cos(1e6 / (sampleRate * timeConstant_uS));
-    this.alpha = -y + Math.sqrt(y * y + 2 * y);
+    this.alpha = alpha(sampleRate, timeConstant_uS * 1e-6);
     this.val = 0;
   }
 
@@ -229,7 +250,7 @@ export class Deemphasizer implements Filter {
     return copy;
   }
 
-  delay(): number {
+  getDelay(): number {
     return 0;
   }
 

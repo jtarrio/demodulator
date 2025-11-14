@@ -13,7 +13,17 @@
 // limitations under the License.
 
 import { test, assert } from "vitest";
-import { add, addDc, count, power, rmsd, sineTone } from "../testutil.js";
+import {
+  addDc,
+  count,
+  iqAdd,
+  iqRealSineTone,
+  iqRmsd,
+  iqSineTone,
+  power,
+  rmsd,
+  sineTone,
+} from "../testutil.js";
 import {
   AGC,
   DcBlocker,
@@ -178,20 +188,17 @@ test("Deemphasizer", () => {
 });
 
 test("FrequencyShifter", () => {
-  // One real 1000 sinetone
-  let iI = sineTone(80, 8000, 1000, 0.5);
-  let iQ = new Float32Array(iI.length);
+  // One real 1000 Hz sinetone
+  let input = iqRealSineTone(80, 8000, 1000, 0.5);
 
   // Shift up 300 Hz
   let shifter = new FrequencyShifter(8000);
-  shifter.inPlace(iI, iQ, 300);
+  shifter.inPlace(input[0], input[1], 300);
 
   // We expect to see one complex sinetone at -700 Hz and another at 1300 Hz
-  let eI = add(sineTone(80, 8000, -700, 0.25), sineTone(80, 8000, 1300, 0.25));
-  let eQ = add(
-    sineTone(80, 8000, -700, 0.25, -Math.PI / 2),
-    sineTone(80, 8000, 1300, 0.25, -Math.PI / 2)
+  let expected = iqAdd(
+    iqSineTone(80, 8000, -700, 0.25),
+    iqSineTone(80, 8000, 1300, 0.25)
   );
-  assert.isAtMost(rmsd(iI, eI), 0.0005);
-  assert.isAtMost(rmsd(iQ, eQ), 0.0005);
+  assert.isAtMost(iqRmsd(input, expected), 0.0005);
 });

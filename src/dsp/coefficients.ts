@@ -17,7 +17,7 @@
  * Generates coefficients for a FIR low-pass filter with the given
  * corner frequency and kernel length at the given sample rate.
  * @param sampleRate The signal's sample rate.
- * @param cornerFreq The -3dB frequency in Hz.
+ * @param cornerFreq The -6dB frequency in Hz.
  * @param length The filter kernel's length. Should be an odd number.
  * @returns The FIR coefficients for the filter.
  */

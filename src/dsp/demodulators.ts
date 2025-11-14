@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import { makeHilbertKernel } from "./coefficients.js";
-import { FIRFilter } from "./filters.js";
+import { alpha, FIRFilter } from "./filters.js";
 import { Float32Buffer } from "./buffers.js";
 
 /** The sideband to demodulate. */
@@ -46,8 +46,9 @@ export class SSBDemodulator {
     this.filterHilbert.loadSamples(Q);
     for (let i = 0; i < out.length; ++i) {
       out[i] =
-        this.filterDelay.getDelayed(i) +
-        this.filterHilbert.get(i) * this.hilbertMul;
+        (this.filterDelay.getDelayed(i) +
+          this.filterHilbert.get(i) * this.hilbertMul) /
+        2;
     }
   }
 }
@@ -58,7 +59,7 @@ export class AMDemodulator {
    * @param sampleRate The signal's sample rate.
    */
   constructor(sampleRate: number) {
-    this.alpha = 1 - Math.exp(-1 / (sampleRate / 2));
+    this.alpha = alpha(sampleRate, 0.5);
     this.carrierAmplitude = 0;
   }
 
@@ -75,7 +76,7 @@ export class AMDemodulator {
       const power = vI * vI + vQ * vQ;
       const amplitude = Math.sqrt(power);
       carrierAmplitude += alpha * (amplitude - carrierAmplitude);
-      out[i] = carrierAmplitude == 0 ? 0 : amplitude / carrierAmplitude - 1;
+      out[i] = carrierAmplitude == 0 ? 0 : 2 * (amplitude / carrierAmplitude - 1);
     }
     this.carrierAmplitude = carrierAmplitude;
   }
@@ -224,10 +225,7 @@ class ExpAverage {
    * @param weight Weight of the previous average value.
    * @param wantStd Whether to calculate the standard deviation.
    */
-  constructor(
-    private weight: number,
-    private wantStd?: boolean
-  ) {
+  constructor(private weight: number, private wantStd?: boolean) {
     this.avg = 0;
     this.std = 0;
   }
