@@ -127,6 +127,39 @@ export function iqRealSineTone(
   ];
 }
 
+// Returns white noise of the given amplitude.
+// Uses a PRNG with a fixed seed so the noise is always the same.
+export function noise(length: number, amplitude: number): Float32Array {
+  let rnd = new PRNG(0x1234_5678_abcd_ef01n);
+  return new Float32Array(length).map((_) => amplitude * rnd.next());
+}
+
+// PRNG from Widynski, Bernard (2020). "Squares: A Fast Counter-Based RNG". https://doi.org/10.48550/arXiv.2004.06278
+export class PRNG {
+  constructor(seed: bigint) {
+    this.counter = BigInt(1);
+    this.key = seed;
+  }
+
+  private counter: bigint;
+  private key: bigint;
+
+  next(): number {
+    let x = this.counter * this.key;
+    let y = x;
+    let z = y + this.key;
+    x = x * x + y;
+    x = ((x & 0xffffffff00000000n) >> 32n) | ((x & 0xffffffffn) << 32n);
+    x = x * x + z;
+    x = ((x & 0xffffffff00000000n) >> 32n) | ((x & 0xffffffffn) << 32n);
+    x = x * x + y;
+    x = ((x & 0xffffffff00000000n) >> 32n) | ((x & 0xffffffffn) << 32n);
+    let n = Number(((x * x + z) & 0xffff_ffff_0000_0000n) >> BigInt(32));
+    this.counter++;
+    return n / 2 ** 32;
+  }
+}
+
 // Adds some DC to a signal
 export function addDc(signal: Float32Array, value: number): Float32Array {
   for (let i = 0; i < signal.length; ++i) {
@@ -143,6 +176,26 @@ export function add(a: Float32Array, ...rest: Float32Array[]): Float32Array {
       a[j] += r[j];
     }
   }
+  return a;
+}
+
+// Multiplies several signals
+export function multiply(
+  a: Float32Array,
+  ...rest: Float32Array[]
+): Float32Array {
+  for (let i = 0; i < rest.length; ++i) {
+    const r = rest[i];
+    for (let j = 0; j < r.length && j < a.length; ++j) {
+      a[j] *= r[j];
+    }
+  }
+  return a;
+}
+
+// Amplifies a signal
+export function amplify(a: Float32Array, amount: number): Float32Array {
+  for (let i = 0; i < a.length; ++i) a[i] *= amount;
   return a;
 }
 
@@ -164,12 +217,40 @@ export function iqSubarray(a: IQ, start: number, end?: number): IQ {
   return [a[0].subarray(start, end), a[1].subarray(start, end)];
 }
 
-// Returns the modulus of an element in an I/Q signal
-export function modulus(a: IQ, i: number): number {
-  return Math.hypot(a[0][i], a[1][i]);
+// Returns the modulus of an I/Q signal or one of its elements
+export function modulus(a: IQ, i: number): number;
+export function modulus(a: IQ): Float32Array;
+export function modulus(a: IQ, i?: number): number | Float32Array {
+  if (i !== undefined) return Math.hypot(a[0][i], a[1][i]);
+  return a[0].map((_, i) => Math.hypot(a[0][i], a[1][i]));
 }
 
-// Returns the argument of an element in an I/Q signal
-export function argument(a: IQ, i: number): number {
-  return Math.atan2(a[1][i], a[0][i]);
+// Returns the argument of an I/Q signal or one of its elements
+export function argument(a: IQ, i: number): number;
+export function argument(a: IQ): Float32Array;
+export function argument(a: IQ, i?: number): number | Float32Array {
+  if (i !== undefined) return Math.atan2(a[1][i], a[0][i]);
+  return a[0].map((_, i) => Math.atan2(a[1][i], a[0][i]));
+}
+
+// Generates an "ascii art" representation of an FFT spectrum for a real signal.
+export function fftSpectrum(fft: IQ, width: number, lines: number): string {
+  let m = modulus(fft);
+  let maxm = Math.max(...m);
+  let maxPower = maxm * maxm;
+  let powPerLine = maxPower / lines;
+  let binsPerChar = (m.length / 2) / width;
+  let out = Array.from({length: lines}).map(_ => '');
+    for (let c = 0; c < width; ++c) {
+      let h = 0;
+      for (let b = Math.floor(binsPerChar * c); b < Math.floor(binsPerChar * (c + 1)); ++b) {
+        h = Math.max(h, m[b]);
+      }
+      h = Math.round((h * h) / powPerLine);
+      for (let lr = 0; lr < lines; ++lr) {
+        let l = lines - lr - 1;
+        out[l] += h >= lr ? 'X' : ' ';
+      }
+  }
+  return out.join('\n');
 }

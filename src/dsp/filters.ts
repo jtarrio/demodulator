@@ -132,7 +132,7 @@ export class AGC implements Filter {
     maxGain?: number
   ) {
     this.dcBlocker = new DcBlocker(sampleRate);
-    this.alpha = alpha(sampleRate, timeConstantSeconds);
+    this.alpha = decay(sampleRate, timeConstantSeconds);
     this.counter = 0;
     this.maxPower = 0;
     this.maxGain = maxGain || 100;
@@ -184,7 +184,7 @@ export class AGC implements Filter {
 /** A filter that blocks DC signals. */
 export class DcBlocker implements Filter {
   constructor(sampleRate: number) {
-    this.alpha = alpha(sampleRate, 0.5);
+    this.alpha = decay(sampleRate, 0.5);
     this.dc = 0;
   }
 
@@ -214,40 +214,48 @@ export class DcBlocker implements Filter {
 }
 
 /**
- * Returns the decay value to use in a single-pole IIR filter
+ * Returns the decay value to use in a single-pole low-pass or high-pass IIR filter
  * with the given time constant.
- *
- * The filter's output must be iterated using the expression:
- *
- * Y += alpha * (X - Y);
  * @param sampleRate The signal's sample rate.
  * @param timeConstant The time constant in seconds
  */
-export function alpha(sampleRate: number, timeConstant: number): number {
-  const y = 1 - Math.cos(1 / (sampleRate * timeConstant));
-  return -y + Math.sqrt(y * y + 2 * y);
+export function decay(sampleRate: number, timeConstant: number): number {
+  return 1 - Math.exp(-1 / (sampleRate * timeConstant));
 }
 
-/** A de-emphasis filter with the given time constant. */
-export class Deemphasizer implements Filter {
+/* Returns the time constant corresponding to a -3dB frequency. */
+export function frequencyToTimeConstant(freq: number) {
+  return 1 / (2 * Math.PI * freq);
+}
+
+/** A low-pass single-pole IIR filter. */
+export class IIRLowPass implements Filter {
+  static forFrequency(sampleRate: number, freq: number): IIRLowPass {
+    return new IIRLowPass(sampleRate, frequencyToTimeConstant(freq));
+  }
+
+  static forTimeConstant(sampleRate: number, timeConstant: number): IIRLowPass {
+    return new IIRLowPass(sampleRate, timeConstant);
+  }
+
   /**
    * @param sampleRate The signal's sample rate.
-   * @param timeConstant_uS The filter's time constant in microseconds.
+   * @param timeConstant The filter's time constant in seconds.
    */
-  constructor(sampleRate: number, timeConstant_uS: number) {
-    this.alpha = alpha(sampleRate, timeConstant_uS * 1e-6);
+  private constructor(
+    private sampleRate: number,
+    private timeConstant: number
+  ) {
+    this.alpha = decay(sampleRate, timeConstant);
     this.val = 0;
   }
 
   private alpha: number;
   private val: number;
 
-  /** Returns a copy of this deemphasizer. */
-  clone(): Deemphasizer {
-    let copy = new Deemphasizer(1, 1);
-    copy.alpha = this.alpha;
-    copy.val = this.val;
-    return copy;
+  /** Returns a copy of this filter. */
+  clone(): IIRLowPass {
+    return new IIRLowPass(this.sampleRate, this.timeConstant);
   }
 
   getDelay(): number {
@@ -255,8 +263,8 @@ export class Deemphasizer implements Filter {
   }
 
   /**
-   * Deemphasizes the given samples in place.
-   * @param samples The samples to deemphasize.
+   * Filters the given samples in place.
+   * @param samples The samples to filter.
    */
   inPlace(samples: Float32Array) {
     const alpha = this.alpha;
@@ -266,6 +274,96 @@ export class Deemphasizer implements Filter {
       samples[i] = val;
     }
     this.val = val;
+  }
+
+  /** Filters an individual sample. */
+  add(sample: number): number {
+    this.val += this.alpha * (sample - this.val);
+    return this.val;
+  }
+
+  /** Returns the value currently held by the filter. */
+  get value() {
+    return this.val;
+  }
+
+  /** Returns the phase shift at the given frequency. */
+  public phaseShift(freq: number): number {
+    return -Math.atan(2 * Math.PI * freq * this.timeConstant);
+  }
+}
+
+/** A sequence of chained IIR low-pass filters, for sharper filters. */
+export class IIRLowPassChain implements Filter {
+  static forFrequency(
+    count: number,
+    sampleRate: number,
+    freq: number
+  ): IIRLowPassChain {
+    return new IIRLowPassChain(
+      count,
+      sampleRate,
+      frequencyToTimeConstant(freq)
+    );
+  }
+
+  static forTimeConstant(
+    count: number,
+    sampleRate: number,
+    timeConstant: number
+  ): IIRLowPassChain {
+    return new IIRLowPassChain(count, sampleRate, timeConstant);
+  }
+
+  private constructor(count: number, sampleRate: number, timeConstant: number) {
+    this.filters = Array.from({ length: count }).map((_) =>
+      IIRLowPass.forTimeConstant(sampleRate, timeConstant)
+    );
+  }
+
+  private filters: IIRLowPass[];
+
+  /** Returns a copy of this filter. */
+  clone(): IIRLowPassChain {
+    let copy = new IIRLowPassChain(0, 1, 1);
+    copy.filters = this.filters.map((f) => f.clone());
+    return copy;
+  }
+
+  getDelay(): number {
+    return 0;
+  }
+
+  /**
+   * Filters the given samples in place.
+   * @param samples The samples to filter.
+   */
+  inPlace(samples: Float32Array) {
+    for (let f of this.filters) {
+      f.inPlace(samples);
+    }
+  }
+
+  /** Filters an individual sample. */
+  add(sample: number): number {
+    for (let f of this.filters) {
+      sample = f.add(sample);
+    }
+    return sample;
+  }
+
+  /** Returns the value currently held by the filter. */
+  get value() {
+    return this.filters[this.filters.length - 1].value;
+  }
+
+  /** Returns the phase shift at the given frequency. */
+  phaseShift(freq: number): number {
+    let lag = 0;
+    for (let f of this.filters) {
+      lag += f.phaseShift(freq);
+    }
+    return ((lag + Math.PI) % (2 * Math.PI)) - Math.PI;
   }
 }
 
@@ -296,5 +394,127 @@ export class FrequencyShifter {
     }
     this.cosine = cosine;
     this.sine = sine;
+  }
+}
+
+/** A phase-locked loop that can detect a signal with a given frequency. */
+export class PLL {
+  /**
+   * @param sampleRate The sample rate for the input signal.
+   * @param freq The frequency of the signal to detect, in Hz.
+   * @param tolerance The frequency tolerance for the signal, in Hz.
+   */
+  constructor(private sampleRate: number, freq: number, tolerance: number) {
+    this.phase = 0;
+    this.speed = (2 * Math.PI * freq) / sampleRate;
+    this.maxSpeedCorr = (2 * Math.PI * tolerance) / sampleRate;
+    this.speedCorrection = 0;
+    this.phaseCorrection = 0;
+    this.biFlt = IIRLowPassChain.forFrequency(4, sampleRate, tolerance * 2.5);
+    this.bqFlt = IIRLowPassChain.forFrequency(4, sampleRate, tolerance * 2.5);
+    this.siFlt = IIRLowPassChain.forFrequency(4, sampleRate, 20);
+    this.sqFlt = IIRLowPassChain.forFrequency(4, sampleRate, 20);
+    this.piFlt = IIRLowPassChain.forFrequency(4, sampleRate, 20);
+    this.pqFlt = IIRLowPassChain.forFrequency(4, sampleRate, 20);
+    this.lbI = 0;
+    this.lbQ = 0;
+    this.lockFlt = IIRLowPass.forFrequency(sampleRate, 10);
+    this.lockThreshold = (20 / 360) * 2 * Math.PI / sampleRate;
+    this.lockCounter = 0;
+    this.angle = 0;
+    this.cos = 1;
+    this.sin = 0;
+    this.locked = true;
+  }
+
+  private phase: number;
+  private speed: number;
+  private maxSpeedCorr: number;
+  private speedCorrection: number;
+  private phaseCorrection: number;
+  private biFlt: IIRLowPassChain;
+  private bqFlt: IIRLowPassChain;
+  private siFlt: IIRLowPassChain;
+  private sqFlt: IIRLowPassChain;
+  private piFlt: IIRLowPassChain;
+  private pqFlt: IIRLowPassChain;
+  private lbI: number;
+  private lbQ: number;
+  private lockFlt: IIRLowPass;
+  private lockThreshold: number;
+  private lockCounter: number;
+  public angle: number;
+  public cos: number;
+  public sin: number;
+  public locked: boolean;
+
+  add(sample: number): void {
+    let phase = this.phase;
+    // Generate outputs with last computed parameters
+    this.cos = Math.cos(phase);
+    this.sin = Math.sin(phase);
+
+    // Compute I+jQ, the difference between the input and our internal oscillator
+    this.lbI = this.biFlt.add(Math.cos(-phase) * sample);
+    this.lbQ = this.bqFlt.add(Math.sin(-phase) * sample);
+    this.phase += this.speed;
+
+    this.add = this.addRemaining;
+  }
+
+  addRemaining(sample: number) {
+    let phase = this.phase;
+
+    // Generate outputs with last computed parameters
+    this.angle = phase + this.speedCorrection + this.phaseCorrection;
+    this.cos = Math.cos(this.angle);
+    this.sin = Math.sin(this.angle);
+
+    // Compute (bI, bQ), the beat (difference) between the input and our reference oscillator
+    const rawI = Math.cos(-phase) * sample;
+    const rawQ = Math.sin(-phase) * sample;
+    const bI = this.biFlt.add(rawI);
+    const bQ = this.bqFlt.add(rawQ);
+    this.phase = this.phase + this.speed;
+
+    // The beat is going to lag or advance wrt the input because of the input filter chain
+
+    // Compute (sI, sQ), the average phase speed of (bI, bQ). That's the difference in frequency.
+    const rsI = this.lbI * bI + this.lbQ * bQ;
+    const rsQ = this.lbI * bQ - bI * this.lbQ;
+    const sI = this.siFlt.add(rsI);
+    const sQ = this.sqFlt.add(rsQ);
+    this.lbI = bI;
+    this.lbQ = bQ;
+    const beatSpeed = Math.atan2(sQ, sI);
+    const speedCorr = Math.max(
+      -this.maxSpeedCorr,
+      Math.min(beatSpeed, this.maxSpeedCorr)
+    );
+    this.speedCorrection += speedCorr;
+
+    // Compute (dI, dQ), the difference between the beat (bI, bQ) and our speed correction (cI, cQ)
+    // That's the difference in phase.
+    const cI = Math.cos(this.speedCorrection);
+    const cQ = Math.sin(this.speedCorrection);
+    const rdI = bI * cI + bQ * cQ;
+    const rdQ = cI * bQ - bI * cQ;
+    const dI = this.piFlt.add(rdI);
+    const dQ = this.pqFlt.add(rdQ);
+    // But the biFlt/bqFlt are going to shift the phase of (bI, bQ), so compensate for that.
+    const freqCorrectionHz = (speedCorr * this.sampleRate) / (2 * Math.PI);
+    const shift = this.biFlt.phaseShift(freqCorrectionHz);
+    const phaseDiff = Math.atan2(dQ, dI) - shift;
+
+    // Check if we are locked
+    let deriv = this.lockFlt.add(this.phaseCorrection - phaseDiff);
+    this.phaseCorrection = phaseDiff;
+    if (Math.abs(deriv) < this.lockThreshold) {
+      this.lockCounter++;
+    } else {
+      this.lockCounter = 0;
+    }
+
+    this.locked = this.lockCounter > 20;
   }
 }

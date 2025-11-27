@@ -14,15 +14,12 @@
 
 import { test, assert } from "vitest";
 import {
-  add,
   argument,
   iq,
   iqAdd,
   iqRmsd,
   iqSineTone,
   modulus,
-  rmsd,
-  sineTone,
 } from "../testutil.js";
 import { FFT } from "../../src/dsp/fft.js";
 

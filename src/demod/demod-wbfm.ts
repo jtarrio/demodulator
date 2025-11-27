@@ -14,7 +14,7 @@
 
 import { makeLowPassKernel } from "../dsp/coefficients.js";
 import { FMDemodulator, StereoSeparator } from "../dsp/demodulators.js";
-import { FrequencyShifter, Deemphasizer, FIRFilter } from "../dsp/filters.js";
+import { FrequencyShifter, IIRLowPass, FIRFilter } from "../dsp/filters.js";
 import { getPower } from "../dsp/power.js";
 import { ComplexDownsampler, RealDownsampler } from "../dsp/resamplers.js";
 import { Configurator, Demod, Demodulated } from "./modes.js";
@@ -148,19 +148,19 @@ export class DemodWBFMStage2 implements Demod<ModeWBFM> {
    */
   constructor(inRate: number, outRate: number, private mode: ModeWBFM) {
     const pilotF = 19000;
-    const deemphTc = 50;
+    const deemphTc = 50 * 1e-6;
     this.monoSampler = new RealDownsampler(inRate, outRate, 41);
     this.stereoSampler = new RealDownsampler(inRate, outRate, 41);
     this.stereoSeparator = new StereoSeparator(inRate, pilotF);
-    this.leftDeemph = new Deemphasizer(outRate, deemphTc);
-    this.rightDeemph = new Deemphasizer(outRate, deemphTc);
+    this.leftDeemph = IIRLowPass.forTimeConstant(outRate, deemphTc);
+    this.rightDeemph = IIRLowPass.forTimeConstant(outRate, deemphTc);
   }
 
   private monoSampler: RealDownsampler;
   private stereoSampler: RealDownsampler;
   private stereoSeparator: StereoSeparator;
-  private leftDeemph: Deemphasizer;
-  private rightDeemph: Deemphasizer;
+  private leftDeemph: IIRLowPass;
+  private rightDeemph: IIRLowPass;
 
   getMode(): ModeWBFM {
     return this.mode;

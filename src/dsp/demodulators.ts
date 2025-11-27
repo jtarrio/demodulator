@@ -14,7 +14,7 @@
 // limitations under the License.
 
 import { makeHilbertKernel } from "./coefficients.js";
-import { alpha, FIRFilter } from "./filters.js";
+import { decay, FIRFilter, PLL } from "./filters.js";
 import { Float32Buffer } from "./buffers.js";
 
 /** The sideband to demodulate. */
@@ -59,7 +59,7 @@ export class AMDemodulator {
    * @param sampleRate The signal's sample rate.
    */
   constructor(sampleRate: number) {
-    this.alpha = alpha(sampleRate, 0.5);
+    this.alpha = decay(sampleRate, 0.5);
     this.carrierAmplitude = 0;
   }
 
@@ -76,7 +76,8 @@ export class AMDemodulator {
       const power = vI * vI + vQ * vQ;
       const amplitude = Math.sqrt(power);
       carrierAmplitude += alpha * (amplitude - carrierAmplitude);
-      out[i] = carrierAmplitude == 0 ? 0 : 2 * (amplitude / carrierAmplitude - 1);
+      out[i] =
+        carrierAmplitude == 0 ? 0 : 2 * (amplitude / carrierAmplitude - 1);
     }
     this.carrierAmplitude = carrierAmplitude;
   }
@@ -112,36 +113,7 @@ export class FMDemodulator {
       let imag = lI * Q[i] - I[i] * lQ;
       lI = I[i];
       lQ = Q[i];
-      let sgn = 1;
-      let circ = 0;
-      let ang = 0;
-      let div = 1;
-      // My silly implementation of atan2.
-      if (real < 0) {
-        sgn = -sgn;
-        real = -real;
-        circ = Math.PI;
-      }
-      if (imag < 0) {
-        sgn = -sgn;
-        imag = -imag;
-        circ = -circ;
-      }
-      if (real > imag) {
-        div = imag / real;
-      } else if (real != imag) {
-        ang = -Math.PI / 2;
-        div = real / imag;
-        sgn = -sgn;
-      }
-      const angle =
-        circ +
-        sgn *
-          (ang +
-            div /
-              (0.98419158358617365 +
-                div * (0.093485702629671305 + div * 0.19556307900617517)));
-      out[i] = angle * mul;
+      out[i] = Math.atan2(imag, real) * mul;
     }
     this.lI = lI;
     this.lQ = lQ;
@@ -156,31 +128,11 @@ export class StereoSeparator {
    */
   constructor(sampleRate: number, pilotFreq: number) {
     this.buffer = new Float32Buffer(4);
-    this.sin = 0;
-    this.cos = 1;
-    this.iavg = new ExpAverage(9999);
-    this.qavg = new ExpAverage(9999);
-    this.cavg = new ExpAverage(49999, true);
-
-    this.sinTable = new Float32Array(8001);
-    this.cosTable = new Float32Array(8001);
-    for (let i = 0; i < 8001; ++i) {
-      let freq = ((pilotFreq + i / 100 - 40) * 2 * Math.PI) / sampleRate;
-      this.sinTable[i] = Math.sin(freq);
-      this.cosTable[i] = Math.cos(freq);
-    }
+    this.pll = new PLL(sampleRate, pilotFreq, 10);
   }
 
-  private static STD_THRES = 400;
-
   private buffer: Float32Buffer;
-  private sin: number;
-  private cos: number;
-  private iavg: ExpAverage;
-  private qavg: ExpAverage;
-  private cavg: ExpAverage;
-  private sinTable: Float32Array;
-  private cosTable: Float32Array;
+  private pll: PLL;
 
   /**
    * Locks on to the pilot tone and uses it to demodulate the stereo audio.
@@ -192,28 +144,13 @@ export class StereoSeparator {
    */
   separate(samples: Float32Array): { found: boolean; diff: Float32Array } {
     let out = this.buffer.get(samples.length);
-    let sin = this.sin;
-    let cos = this.cos;
-    for (let i = 0; i < out.length; ++i) {
-      let hdev = this.iavg.add(samples[i] * sin);
-      let vdev = this.qavg.add(samples[i] * cos);
-      out[i] *= sin * cos * 2;
-      let corr;
-      if (hdev > 0) {
-        corr = Math.max(-4, Math.min(4, vdev / hdev));
-      } else {
-        corr = vdev == 0 ? 0 : vdev > 0 ? 4 : -4;
-      }
-      let idx = Math.round((corr + 4) * 1000);
-      const newSin = sin * this.cosTable[idx] + cos * this.sinTable[idx];
-      cos = cos * this.cosTable[idx] - sin * this.sinTable[idx];
-      sin = newSin;
-      this.cavg.add(corr * 10);
+    for (let i = 0; i < samples.length; ++i) {
+      this.pll.add(samples[i]);
+      out[i] = samples[i] * this.pll.sin * this.pll.cos * 2;
     }
-    this.sin = sin;
-    this.cos = cos;
+
     return {
-      found: this.cavg.getStd() < StereoSeparator.STD_THRES,
+      found: this.pll.locked,
       diff: out,
     };
   }

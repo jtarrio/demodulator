@@ -14,17 +14,22 @@
 
 import { test, assert } from "vitest";
 import {
+  add,
   iqAdd,
   iqRealSineTone,
   iqSineTone,
-  iqSubarray,
   modulus,
+  multiply,
   power,
+  rmsd,
+  sineTone,
 } from "../testutil.js";
 import {
   AMDemodulator,
+  FMDemodulator,
   Sideband,
   SSBDemodulator,
+  StereoSeparator,
 } from "../../src/dsp/demodulators.js";
 import { FFT } from "../../src/dsp/fft.js";
 
@@ -109,4 +114,49 @@ test("AMDemodulator", () => {
       );
     }
   }
+});
+
+test("FMDemodulator", () => {
+  const sampleRate = 48000;
+  const len = sampleRate / 10;
+  const maxDev = 10000;
+  let demod = new FMDemodulator(maxDev / sampleRate);
+
+  for (let f = -maxDev; f <= maxDev; f += maxDev / 20) {
+    let input = iqSineTone(len, sampleRate, f, 1);
+    let output = new Float32Array(len);
+    demod.demodulate(input[0], input[1], output);
+
+    let expected = new Float32Array(len);
+    expected.fill(f / maxDev);
+    assert.isAtMost(
+      rmsd(expected.subarray(len / 2), output.subarray(len / 2)),
+      0.001,
+      `Mismatch in received value for deviation ${f}`
+    );
+  }
+});
+
+test("StereoSeparator - with stereo signal", () => {
+  const sampleRate = 336000;
+  const len = sampleRate / 10;
+  const pilotFreq = 19000;
+  let separator = new StereoSeparator(sampleRate, pilotFreq);
+  let input = add(
+    sineTone(len, sampleRate, pilotFreq, 0.1, -Math.PI / 2), // sin(2πPt)
+    multiply(
+      sineTone(len, sampleRate, pilotFreq * 2, 1, -Math.PI / 2), // sin(4πPt)
+      sineTone(len, sampleRate, 2625, 0.45)
+    )
+  );
+  let { found, diff: output } = separator.separate(input);
+  assert.isTrue(found);
+
+  let fft = FFT.ofLength(4096);
+  let transformed = fft.transform(
+    output.subarray(output.length - fft.length, output.length),
+    new Float32Array(fft.length)
+  );
+  const bin = (2625 * fft.length) / sampleRate;
+  assert.approximately(modulus(transformed, bin), 0.1125, 0.0005);
 });
